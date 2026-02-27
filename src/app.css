@@ -37,3 +37,12 @@ body {
 #app {
   min-height: 100vh;
 }
+
+@media print {
+  body {
+    zoom: 0.7;
+  }
+  * {
+    border-color: black !important;
+  }
+}
