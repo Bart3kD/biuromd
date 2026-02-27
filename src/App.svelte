@@ -24,12 +24,12 @@
       : []
   );
 
-  let zakupTotals = $derived.by(() => {
+  let wydatkiTotals = $derived.by(() => {
     let eur = 0;
     let pln = 0;
     if (statement) {
       statement.transactions.forEach((tx, i) => {
-        if (tx.description.includes('ZAKUP PRZY UŻYCIU KARTY')) {
+        if (tx.description.includes('ZAKUP PRZY UŻYCIU KARTY') && tx.amount < 0) {
           eur += tx.amount;
           const p = plnAmounts[i];
           if (p) pln += p.pln;
@@ -38,6 +38,7 @@
     }
     return { eur, pln };
   });
+
 
   async function processFile(file: File) {
     if (!file.name.toLowerCase().endsWith('.pdf')) {
@@ -200,7 +201,7 @@
     <!-- Results -->
     {#if statement && !loading && !ratesLoading}
       <!-- Toolbar -->
-      <div class="mb-6 flex items-center justify-between">
+      <div class="mb-6 flex items-center justify-between print:hidden">
         <h2 class="text-lg font-semibold text-foreground">{fileName}</h2>
         <button
           class="inline-flex items-center gap-2 rounded-md border bg-background px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-muted"
@@ -217,11 +218,11 @@
       <div class="mb-6 grid grid-cols-2 gap-4">
         <div class="rounded-lg border bg-card px-4 py-3 shadow-sm">
           <p class="text-xs text-muted-foreground uppercase tracking-wide">Wydatki kartą (EUR)</p>
-          <p class="mt-1 text-lg font-semibold text-red-600">{formatEur(zakupTotals.eur)} EUR</p>
+          <p class="mt-1 text-lg font-semibold text-red-600">{formatEur(wydatkiTotals.eur)} EUR</p>
         </div>
         <div class="rounded-lg border bg-card px-4 py-3 shadow-sm">
           <p class="text-xs text-muted-foreground uppercase tracking-wide">Wydatki kartą (PLN)</p>
-          <p class="mt-1 text-lg font-semibold text-red-600">{zakupTotals.pln !== 0 ? formatPln(zakupTotals.pln) : '—'} {zakupTotals.pln !== 0 ? 'PLN' : ''}</p>
+          <p class="mt-1 text-lg font-semibold text-red-600">{wydatkiTotals.pln !== 0 ? formatPln(wydatkiTotals.pln) : '—'} {wydatkiTotals.pln !== 0 ? 'PLN' : ''}</p>
         </div>
       </div>
 
@@ -258,7 +259,7 @@
                       —
                     {/if}
                   </td>
-                  <td class="px-4 py-3 w-32 align-middle text-right font-mono font-medium whitespace-nowrap {tx.description.includes("ZAKUP PRZY UŻYCIU KARTY") ? 'bg-[#00f]' : ''}">
+                  <td class="px-4 py-3 w-32 align-middle text-right font-mono font-medium whitespace-nowrap text-white print:text-black {tx.description.includes("ZAKUP PRZY UŻYCIU KARTY") ? 'bg-[#00f] print:text-[#00f]!' : ''}">
                     {#if pln}
                       {tx.amount >= 0 ? '+' : ''}{formatPln(pln.pln)}
                     {:else}

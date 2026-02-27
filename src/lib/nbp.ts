@@ -19,8 +19,8 @@ export async function fetchEurRates(start: string, end: string): Promise<NbpRate
 
 // Find the most recent rate strictly before `date` (YYYY-MM-DD).
 // Handles weekends, holidays etc. by picking the closest earlier date.
-export function rateBeforeDate(rates: NbpRate[], date: string): NbpRate | null {
-  let result: NbpRate | null = null;
+export function rateBeforeDate(rates: NbpRate[], date: string): NbpRate | undefined {
+  let result: NbpRate | undefined = undefined;
   for (const rate of rates) {
     if (rate.effectiveDate < date) {
       result = rate;
