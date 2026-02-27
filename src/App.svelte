@@ -2,86 +2,101 @@
   import { parsePdfBrowser, type BankStatement } from './lib/parse-pdf-browser';
   import { fetchEurRates, rateBeforeDate, type NbpRate } from './lib/nbp';
 
-  let statement = $state<BankStatement | null>(null);
-  let loading = $state(false);
-  let error = $state<string | null>(null);
+  // ####################
+  // State Types
+  // ####################
+
+  type AppState =
+    | { type: 'idle' }
+    | { type: 'parsing'; fileName: string }
+    | { type: 'parse-failed'; error: string }
+    | { type: 'fetching-rates'; fileName: string; statement: BankStatement }
+    | { type: 'done'; fileName: string; statement: BankStatement; rates: NbpRate[] };
+
+  function assertIsNever(x: never): never {
+    throw new Error(`Unexpected state: ${JSON.stringify(x)}`);
+  }
+
+  // ####################
+  // State
+  // ####################
+
+  let appState = $state<AppState>({ type: 'idle' });
   let isDragging = $state(false);
-  let fileName = $state<string | null>(null);
-
-  let rates = $state<NbpRate[]>([]);
-  let ratesLoading = $state(false);
   let ratesError = $state<string | null>(null);
-
   let fileInput = $state<HTMLInputElement>();
 
-  let plnAmounts = $derived(
-    statement
-      ? statement.transactions.map(tx => {
-          const rate = rateBeforeDate(rates, tx.bookingDate);
-          if (!rate) return null;
-          return { rate: rate.mid, pln: tx.amount * rate.mid };
-        })
-      : []
-  );
+  // ####################
+  // Derived
+  // ####################
+
+  let plnAmounts = $derived.by(() => {
+    if (appState.type !== 'done') return [];
+    const { statement, rates } = appState;
+    return statement.transactions.map(tx => {
+      const rate = rateBeforeDate(rates, tx.bookingDate);
+      if (!rate) return null;
+      return { rate: rate.mid, pln: tx.amount * rate.mid };
+    });
+  });
 
   let wydatkiTotals = $derived.by(() => {
+    if (appState.type !== 'done') return { eur: 0, pln: 0 };
+    const { statement } = appState;
     let eur = 0;
     let pln = 0;
-    if (statement) {
-      statement.transactions.forEach((tx, i) => {
-        if (tx.description.includes('ZAKUP PRZY UŻYCIU KARTY') && tx.amount < 0) {
-          eur += tx.amount;
-          const p = plnAmounts[i];
-          if (p) pln += p.pln;
-        }
-      });
-    }
+    statement.transactions.forEach((tx, i) => {
+      if (tx.description.includes('ZAKUP PRZY UŻYCIU KARTY') && tx.amount < 0) {
+        eur += tx.amount;
+        const p = plnAmounts[i];
+        if (p) pln += p.pln;
+      }
+    });
     return { eur, pln };
   });
 
+  // ####################
+  // Actions
+  // ####################
 
   async function processFile(file: File) {
     if (!file.name.toLowerCase().endsWith('.pdf')) {
-      error = 'Please select a PDF file.';
+      appState = { type: 'parse-failed', error: 'Please select a PDF file.' };
       return;
     }
-    loading = true;
-    error = null;
     ratesError = null;
-    statement = null;
-    rates = [];
-    fileName = file.name;
+    appState = { type: 'parsing', fileName: file.name };
 
     let parsed: BankStatement;
     try {
       const buffer = await file.arrayBuffer();
       parsed = await parsePdfBrowser(buffer);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-      loading = false;
+      appState = { type: 'parse-failed', error: e instanceof Error ? e.message : String(e) };
       return;
     }
 
-    loading = false;
-    statement = parsed;
+    const fileName = file.name;
 
-    if (parsed.transactions.length > 0) {
-      const bookingDates = parsed.transactions.map(tx => tx.bookingDate).sort();
-      const earliest = bookingDates[0];
-      const latest = bookingDates[bookingDates.length - 1];
+    if (parsed.transactions.length === 0) {
+      appState = { type: 'done', fileName, statement: parsed, rates: [] };
+      return;
+    }
 
-      const startDate = new Date(earliest);
-      startDate.setDate(startDate.getDate() - 30);
-      const start = startDate.toISOString().split('T')[0];
+    appState = { type: 'fetching-rates', fileName, statement: parsed };
 
-      ratesLoading = true;
-      try {
-        rates = await fetchEurRates(start, latest);
-      } catch (e) {
-        ratesError = e instanceof Error ? e.message : String(e);
-      } finally {
-        ratesLoading = false;
-      }
+    const bookingDates = parsed.transactions.map(tx => tx.bookingDate).sort();
+    const startDate = new Date(bookingDates[0]);
+    startDate.setDate(startDate.getDate() - 30);
+    const start = startDate.toISOString().split('T')[0];
+    const latest = bookingDates[bookingDates.length - 1];
+
+    try {
+      const rates = await fetchEurRates(start, latest);
+      appState = { type: 'done', fileName, statement: parsed, rates };
+    } catch (e) {
+      ratesError = e instanceof Error ? e.message : String(e);
+      appState = { type: 'done', fileName, statement: parsed, rates: [] };
     }
   }
 
@@ -118,8 +133,8 @@
 <div class="min-h-screen bg-background">
   <div class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
 
-    <!-- Drop Zone -->
-    {#if !statement && !loading}
+    {#if appState.type === 'idle'}
+      <!-- Drop Zone -->
       <div
         role="button"
         tabindex="0"
@@ -128,8 +143,8 @@
         ondrop={onDrop}
         ondragover={onDragOver}
         ondragleave={onDragLeave}
-        onclick={() => fileInput.click()}
-        onkeydown={(e) => e.key === 'Enter' && fileInput.click()}
+        onclick={() => fileInput?.click()}
+        onkeydown={(e) => e.key === 'Enter' && fileInput?.click()}
       >
         <input
           bind:this={fileInput}
@@ -152,21 +167,29 @@
         <p class="mt-1 text-sm text-muted-foreground">or <span class="text-primary underline-offset-2 hover:underline">click to browse</span></p>
         <p class="mt-3 text-xs text-muted-foreground">Supports bank statement PDFs</p>
       </div>
-    {/if}
 
-    <!-- Loading: Parsing PDF -->
-    {#if loading}
+    {:else if appState.type === 'parsing'}
+      <!-- Loading: Parsing PDF -->
       <div class="flex flex-col items-center justify-center rounded-lg border bg-card p-16 text-center">
         <svg class="mb-4 h-8 w-8 animate-spin text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
         </svg>
-        <p class="text-sm text-muted-foreground">Parsing <span class="font-medium text-foreground">{fileName}</span>…</p>
+        <p class="text-sm text-muted-foreground">Parsing <span class="font-medium text-foreground">{appState.fileName}</span>…</p>
       </div>
-    {/if}
 
-    <!-- Loading: Fetching NBP rates -->
-    {#if ratesLoading}
+    {:else if appState.type === 'parse-failed'}
+      <!-- Error -->
+      <div class="mb-6 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <strong class="font-medium">Error:</strong> {appState.error}
+        <button
+          class="ml-3 underline-offset-2 hover:underline"
+          onclick={() => { appState = { type: 'idle' }; }}
+        >Dismiss</button>
+      </div>
+
+    {:else if appState.type === 'fetching-rates'}
+      <!-- Loading: Fetching NBP rates -->
       <div class="flex flex-col items-center justify-center rounded-lg border bg-card p-16 text-center">
         <svg class="mb-4 h-8 w-8 animate-spin text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -174,38 +197,25 @@
         </svg>
         <p class="text-sm text-muted-foreground">Fetching NBP rates…</p>
       </div>
-    {/if}
 
-    <!-- Error -->
-    {#if error}
-      <div class="mb-6 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-        <strong class="font-medium">Error:</strong> {error}
-        <button
-          class="ml-3 underline-offset-2 hover:underline"
-          onclick={() => { error = null; fileName = null; }}
-        >Dismiss</button>
-      </div>
-    {/if}
+    {:else if appState.type === 'done'}
+      <!-- NBP Rate Error (non-blocking) -->
+      {#if ratesError}
+        <div class="mb-6 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-700 dark:text-yellow-400">
+          <strong class="font-medium">NBP rates unavailable:</strong> {ratesError}
+          <button
+            class="ml-3 underline-offset-2 hover:underline"
+            onclick={() => { ratesError = null; }}
+          >Dismiss</button>
+        </div>
+      {/if}
 
-    <!-- NBP Rate Error (non-blocking) -->
-    {#if ratesError}
-      <div class="mb-6 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-700 dark:text-yellow-400">
-        <strong class="font-medium">NBP rates unavailable:</strong> {ratesError}
-        <button
-          class="ml-3 underline-offset-2 hover:underline"
-          onclick={() => { ratesError = null; }}
-        >Dismiss</button>
-      </div>
-    {/if}
-
-    <!-- Results -->
-    {#if statement && !loading && !ratesLoading}
       <!-- Toolbar -->
       <div class="mb-6 flex items-center justify-between print:hidden">
-        <h2 class="text-lg font-semibold text-foreground">{fileName}</h2>
+        <h2 class="text-lg font-semibold text-foreground">{appState.fileName}</h2>
         <button
           class="inline-flex items-center gap-2 rounded-md border bg-background px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-muted"
-          onclick={() => { statement = null; rates = []; fileName = null; ratesError = null; if (fileInput) fileInput.value = ''; }}
+          onclick={() => { appState = { type: 'idle' }; ratesError = null; }}
         >
           <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
@@ -241,7 +251,7 @@
               </tr>
             </thead>
             <tbody>
-              {#each statement.transactions as tx, i}
+              {#each appState.statement.transactions as tx, i}
                 {@const pln = plnAmounts[i]}
                 <tr class="border-b transition-colors hover:bg-muted/30 {i % 2 === 1 ? 'bg-muted/10' : ''}">
                   <td class="px-4 py-3 w-20 align-middle font-mono text-xs text-muted-foreground whitespace-nowrap">{tx.bookingDate}</td>
@@ -259,7 +269,7 @@
                       —
                     {/if}
                   </td>
-                  <td class="px-4 py-3 w-32 align-middle text-right font-mono font-medium whitespace-nowrap text-white print:text-black {tx.description.includes("ZAKUP PRZY UŻYCIU KARTY") ? 'bg-[#00f] print:text-[#00f]!' : ''}">
+                  <td class="px-4 py-3 w-32 align-middle text-right font-mono font-medium whitespace-nowrap text-white print:text-black {tx.description.includes('ZAKUP PRZY UŻYCIU KARTY') ? 'bg-purchase-highlight print:text-purchase-highlight!' : ''}">
                     {#if pln}
                       {tx.amount >= 0 ? '+' : ''}{formatPln(pln.pln)}
                     {:else}
@@ -272,6 +282,9 @@
           </table>
         </div>
       </div>
+
+    {:else}
+      {assertIsNever(appState)}
     {/if}
 
   </div>

@@ -15,6 +15,7 @@
   --color-destructive: hsl(0 62.8% 30.6%);
   --color-accent: hsl(240 3.7% 15.9%);
   --color-accent-foreground: hsl(0 0% 98%);
+  --color-purchase-highlight: hsl(240 100% 50%);
   --radius: 0.5rem;
   --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
 }

@@ -4,6 +4,10 @@ import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
+// ##############################
+// Constants
+// ##############################
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const COL = {
@@ -14,9 +18,9 @@ const COL = {
   balance: { min: 505, max: Infinity },
 } as const;
 
-function parsePolishNumber(str: string): number {
-  return parseFloat(str.replace(/\s+/g, '').replace(',', '.'));
-}
+// ##############################
+// Types
+// ##############################
 
 interface Item {
   x: number;
@@ -48,6 +52,14 @@ export interface Summary {
 export interface BankStatement {
   summary: Summary;
   transactions: Transaction[];
+}
+
+// ##############################
+// Utilities
+// ##############################
+
+function parsePolishNumber(str: string): number {
+  return parseFloat(str.replace(/\s+/g, '').replace(',', '.'));
 }
 
 function groupIntoRows(items: Item[]): Row[] {
@@ -82,6 +94,10 @@ function isStructuralRow(row: Row): boolean {
     i.str.includes('Saldo ko')
   );
 }
+
+// ##############################
+// Parsing
+// ##############################
 
 function parseSummary(items: Item[]): Summary {
   const text = items.map(i => i.str).join(' ').replace(/\s+/g, ' ');
@@ -149,6 +165,10 @@ function parseTransactions(rows: Row[]): Transaction[] {
     return { bookingDate, operationDate, description, amount, balanceAfter };
   });
 }
+
+// ##############################
+// Export
+// ##############################
 
 export async function parsePdfBrowser(buffer: ArrayBuffer): Promise<BankStatement> {
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
